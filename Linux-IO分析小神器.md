@@ -10,15 +10,36 @@
 
  ## 运行示例
  ```bash
- # 如果不接参数，默认是等待5秒，打印前6个进程，脚本运行一次
-$ io_difference_analysis3.py 4 5 3
- ```
-- 第一个数位每次收集读写数据的间隔秒数
-- 第二个数是打印出读写最多的n个进程
-- 第三个为运行脚本的次数
+python3 io_difference_analysis3.py
+python3 io_difference_analysis3.py -s 2 -n 10
 
-## 程序部分代码
-下面是程序部分代码，获取完整代码请关注微信公众号 `YP小站` ,并回复 `获取IO分析代码`
+python3  ~/python/io_difference_analysis3.new.py -s 10 -n 10
+2026-04-16 15:50:43
+sample_interval: 10.00s, top_n: 10
++-------+-----------------------------+-------------+--------+----------------+--------------+
+| r-pid | r-process                   | read(bytes) | w-pid  | w-process      | write(bytes) |
++-------+-----------------------------+-------------+--------+----------------+--------------+
+| 1     | systemd                     | 0           | 36868  | shsagent       | 266240       |
+| 2     | kthreadd                    | 0           | 214767 | nscd           | 4096         |
+| 3     | rcu_gp                      | 0           | 226788 | pingmesh-agent | 4096         |
+| 4     | rcu_par_gp                  | 0           | 231915 | toc-agent      | 4096         |
+| 5     | slub_flushwq                | 0           | 1      | systemd        | 0            |
+| 6     | netns                       | 0           | 2      | kthreadd       | 0            |
+| 8     | kworker/0:0H-events_highpri | 0           | 3      | rcu_gp         | 0            |
+| 11    | mm_percpu_wq                | 0           | 4      | rcu_par_gp     | 0            |
+| 12    | rcu_tasks_rude_             | 0           | 5      | slub_flushwq   | 0            |
+| 13    | rcu_tasks_trace             | 0           | 6      | netns          | 0            |
++-------+-----------------------------+-------------+--------+----------------+--------------+
+
+ ```
+现在这个脚本可以：
+读取 /proc/<pid>/io，统计两次采样间隔内的 read_bytes / write_bytes
+分别按读、写降序排序
+默认显示前 5 行
+支持参数：-s/--sleep 指定采样间隔秒数，-n/--top 指定显示条数
+
+## 程序代码
+下面是程序完整代码
 
 ```python
 #!/usr/bin/python3
