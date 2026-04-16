@@ -22,73 +22,152 @@ $ io_difference_analysis3.py 4 5 3
 
 ```python
 #!/usr/bin/python3
-#-*- coding:utf-8 -*-
+# -*- coding:utf-8 -*-
 
+import argparse
 import os
 import re
 import sys
 import time
+
 from prettytable import PrettyTable
 
-####
-sys_proc_path = '/proc/'
-re_find_process_number = '^\d+$'
 
-####
-# 通过/proc/$pid/io获取读写信息
-####
+SYS_PROC_PATH = "/proc/"
+RE_FIND_PROCESS_NUMBER = r"^\d+$"
+DEFAULT_SLEEP_TIME = 1
+DEFAULT_LIST_NUM = 5
+
 
 def collect_info():
-    _tmp = {}
-    re_find_process_dir = re.compile(re_find_process_number)
-    for i in os.listdir(sys_proc_path):
-        if re_find_process_dir.search(i):
-            proc_num = re_find_process_dir.search(i).group()
-            # 获得进程名
-            try:
-                with open("%s%s/stat" % (sys_proc_path, proc_num), "r") as process_name1:
-                    process_name = process_name1.read().split(" ")[1]
-                    # 读取io信息
-                    with open("%s%s/io" % (sys_proc_path, proc_num), "r") as rw_io:
-                        for _info in rw_io.readlines():
-                            cut_info = _info.strip().split(':')
-                            if cut_info[0].strip() == "read_bytes":
-                                read_io = int(cut_info[1].strip())
-                            if cut_info[0].strip() == "write_bytes":
-                                write_io = int(cut_info[1].strip())
-                                _tmp[proc_num] = {"name": process_name, "read_bytes": read_io, "write_bytes": write_io}
-            except:pass
-    return _tmp #返回结果 {10: {'write_bytes': '200', 'read_bytes': '100', 'name': '(httpd)'}, '1782': {'write_bytes': 8192, 'read_bytes': 76390400, 'name': '(gnome-session)'}}
+    process_info = {}
+    pid_pattern = re.compile(RE_FIND_PROCESS_NUMBER)
 
-def main(_sleep_time, _list_num):
-    _sort_read_dict = {}
-    _sort_write_dict = {}
-    # 获取系统读写数据
-    process_info_list_frist = collect_info()
-    time.sleep(_sleep_time)
-    process_info_list_second = collect_info()
-    # 将读数据和写数据进行分组，写入两个字典中
-    for loop in process_info_list_second.keys():
-        second_read_v = process_info_list_second[loop]["read_bytes"]  # out 100
-        second_write_v = process_info_list_second[loop]["write_bytes"]  # out 200
+    for entry in os.listdir(SYS_PROC_PATH):
+        if not pid_pattern.match(entry):
+            continue
+
+        pid = entry
+        stat_path = os.path.join(SYS_PROC_PATH, pid, "stat")
+        io_path = os.path.join(SYS_PROC_PATH, pid, "io")
+
         try:
-            frist_read_v = process_info_list_frist[loop]["read_bytes"]
-        except:
-            frist_read_v = 0
-        try:
-            frist_write_v = process_info_list_frist[loop]["write_bytes"]
-        except:
-            frist_write_v = 0
-        # 计算第二次获得数据域第一次获得数据的差
-        _sort_read_dict[loop] = second_read_v - frist_read_v  # 赋值{10:读差值, 20:读差值}
-        _sort_write_dict[loop] = second_write_v - frist_write_v  # 赋值{10:写差值, 20:写差值}
-    # 将读写数据进行排序
-    sort_read_dict = sorted(_sort_read_dict.items(), key=lambda x: x[1], reverse=True)  # out [(20, 读差值), (10, 读差值)]
-    sort_write_dict = sorted(_sort_write_dict.items(), key=lambda y: y[1], reverse=True)  # out [(20, 写差值), (10, 写差值)]
-    # 打印统计结果
-    system_time = time.strftime('%F %T')
-    print(system_time)
-    X = PrettyTable(["r-pid", "r-process", "read(bytes)", "w-pid", "w-process", "write(btyes)"]) #列表名不能有重复
-    X.align["r-pid"] = "l"# Left align r-pid
-    X.padding_width = 1# One space between column edges and contents (default)
+            with open(stat_path, "r", encoding="utf-8") as stat_file:
+                process_name = stat_file.read().split(" ")[1]
+
+            read_bytes = 0
+            write_bytes = 0
+            with open(io_path, "r", encoding="utf-8") as io_file:
+                for line in io_file:
+                    key, value = [item.strip() for item in line.split(":", 1)]
+                    if key == "read_bytes":
+                        read_bytes = int(value)
+                    elif key == "write_bytes":
+                        write_bytes = int(value)
+
+            process_info[pid] = {
+                "name": process_name,
+                "read_bytes": read_bytes,
+                "write_bytes": write_bytes,
+            }
+        except (FileNotFoundError, PermissionError, ProcessLookupError, IndexError, ValueError):
+            continue
+
+    return process_info
+
+
+def build_diff(first_snapshot, second_snapshot):
+    read_diff = {}
+    write_diff = {}
+
+    for pid, second_data in second_snapshot.items():
+        first_data = first_snapshot.get(pid, {})
+        read_diff[pid] = second_data["read_bytes"] - first_data.get("read_bytes", 0)
+        write_diff[pid] = second_data["write_bytes"] - first_data.get("write_bytes", 0)
+
+    return read_diff, write_diff
+
+
+def format_process_name(process_name):
+    return process_name.strip("()")
+
+
+def build_table(first_snapshot, second_snapshot, top_n):
+    read_diff, write_diff = build_diff(first_snapshot, second_snapshot)
+    sorted_read = sorted(read_diff.items(), key=lambda item: item[1], reverse=True)[:top_n]
+    sorted_write = sorted(write_diff.items(), key=lambda item: item[1], reverse=True)[:top_n]
+
+    table = PrettyTable(
+        ["r-pid", "r-process", "read(bytes)", "w-pid", "w-process", "write(bytes)"]
+    )
+    table.align = "l"
+    table.padding_width = 1
+
+    max_rows = max(len(sorted_read), len(sorted_write))
+    for index in range(max_rows):
+        if index < len(sorted_read):
+            r_pid, r_value = sorted_read[index]
+            r_name = format_process_name(second_snapshot[r_pid]["name"])
+            read_row = [r_pid, r_name, r_value]
+        else:
+            read_row = ["", "", ""]
+
+        if index < len(sorted_write):
+            w_pid, w_value = sorted_write[index]
+            w_name = format_process_name(second_snapshot[w_pid]["name"])
+            write_row = [w_pid, w_name, w_value]
+        else:
+            write_row = ["", "", ""]
+
+        table.add_row(read_row + write_row)
+
+    return table
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Analyze Linux process IO and display top read/write processes."
+    )
+    parser.add_argument(
+        "-s",
+        "--sleep",
+        type=float,
+        default=DEFAULT_SLEEP_TIME,
+        help="Sampling interval in seconds, default: %(default)s",
+    )
+    parser.add_argument(
+        "-n",
+        "--top",
+        type=int,
+        default=DEFAULT_LIST_NUM,
+        help="Number of rows to display, default: %(default)s",
+    )
+    return parser.parse_args()
+
+
+def main(sleep_time, list_num):
+    if sleep_time <= 0:
+        raise ValueError("sleep time must be greater than 0")
+    if list_num <= 0:
+        raise ValueError("top number must be greater than 0")
+
+    first_snapshot = collect_info()
+    time.sleep(sleep_time)
+    second_snapshot = collect_info()
+
+    print(time.strftime("%F %T"))
+    print("sample_interval: %.2fs, top_n: %s" % (sleep_time, list_num))
+    print(build_table(first_snapshot, second_snapshot, list_num))
+
+
+if __name__ == "__main__":
+    try:
+        args = parse_args()
+        main(args.sleep, args.top)
+    except KeyboardInterrupt:
+        print("\ninterrupted by user")
+        sys.exit(130)
+    except Exception as exc:
+        print("error: %s" % exc, file=sys.stderr)
+        sys.exit(1)
 ```
